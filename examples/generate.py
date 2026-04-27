@@ -19,15 +19,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate the M-114 FIVES retinal vessel segmentation dataset",
     )
-    parser.add_argument("--num-samples", type=int, default=None,
-                        help="Max samples to generate (default: all 801).")
+    parser.add_argument("--num-samples", type=int, default=200,
+                        help="Max samples to generate (default: 200; use 0 for all 801).")
     parser.add_argument("--output", type=str, default="data/questions",
                         help="Output directory (default: data/questions).")
     args = parser.parse_args()
 
     print("Generating M-114 FIVES retinal vessel segmentation dataset...")
+    num_samples = None if args.num_samples in (0, -1) else args.num_samples
     config = TaskConfig(
-        num_samples=args.num_samples,
+        num_samples=num_samples,
         output_dir=Path(args.output),
     )
     pipeline = TaskPipeline(config)
