@@ -69,8 +69,31 @@ class TaskDownloader:
             return fives_root
 
         if not shutil.which("unar"):
+            print("  unar not found, attempting apt-get install -y unar")
+            try:
+                subprocess.run(
+                    ["sudo", "-n", "apt-get", "update", "-qq"],
+                    check=False,
+                )
+                subprocess.run(
+                    ["sudo", "-n", "apt-get", "install", "-y", "-qq", "unar"],
+                    check=False,
+                )
+            except Exception:
+                pass
+        if not shutil.which("unar"):
+            # Try without sudo (EC2 bootstrap runs as root via systemd)
+            try:
+                subprocess.run(["apt-get", "update", "-qq"], check=False)
+                subprocess.run(
+                    ["apt-get", "install", "-y", "-qq", "unar"], check=False
+                )
+            except Exception:
+                pass
+        if not shutil.which("unar"):
             raise RuntimeError(
-                "`unar` not found on PATH. Install with: apt-get install -y unar"
+                "`unar` not found on PATH and apt-get install failed. "
+                "Install manually: apt-get install -y unar"
             )
 
         self.extract_dir.mkdir(parents=True, exist_ok=True)
