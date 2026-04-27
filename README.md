@@ -1,58 +1,68 @@
-# M-042 — Ddr Lesion Segmentation
+# M-114 — FIVES Retinal Vessel Segmentation
 
-DDR 4-class retinal lesion segmentation.
-
-This repository is part of the Med-VR data-pipeline suite for the VBVR
-(Very Big Video Reasoning) benchmark. It produces standardized video-
-reasoning task samples from the underlying raw medical dataset.
+Generates VBVR (Very Big Video Reasoning) tasks from the FIVES public
+fundus-image dataset (801 high-resolution colour fundus photos with
+expert-annotated binary vessel masks).
 
 ## Task
 
-**Prompt shown to the model**:
+Prompt shown to the model:
 
-> This is a color fundus photograph. Segment the four types of retinal lesions: hard exudates (yellow), hemorrhages (red), microaneurysms (magenta), and soft exudates (cyan). Overlay each lesion with its assigned color and contour.
+> Segment all blood vessels in this fundus image. Trace the complete
+> retinal vasculature including arteries, veins, and their branches;
+> highlight every vessel pixel and ignore background, optic disc, and
+> macular regions.
 
-## S3 Raw Data
+Each sample produces a 5-second vessel-reveal animation as
+`ground_truth.mp4` (30 frames at 6 fps), with the un-annotated fundus
+acting as `first_frame.png` / `first_video.mp4` and the red overlay as
+`final_frame.png` / `last_video.mp4`.
+
+## Source
+
+FIVES — *A Fundus Image Dataset for AI-based Vessel Segmentation*
+(Figshare DOI 10.6084/m9.figshare.19688169). Mirrored to:
 
 ```
-s3://med-vr-datasets/M-042-044_DDR/raw/
+s3://med-vr-datasets/M-114/fives/34969398    # 1.76 GB .rar
 ```
+
+The pipeline downloads the .rar from S3 on the EC2 worker, extracts it
+with `unar` (apt: `unar`; the non-free `unrar` is intentionally avoided),
+then iterates the test split (200 imgs) followed by the train split
+(601 imgs).
+
+## Output Layout
+
+```
+data/questions/fives_retinal_vessel_segmentation_task/
+├── m114_00000_test_100_D/
+│   ├── first_frame.png
+│   ├── final_frame.png
+│   ├── prompt.txt
+│   ├── first_video.mp4
+│   ├── last_video.mp4
+│   ├── ground_truth.mp4
+│   └── metadata.json
+├── m114_00001_test_101_G/
+└── ...
+```
+
+The `_<class>` suffix encodes the FIVES disease label:
+A=AMD, D=DR, G=Glaucoma, N=Normal.
 
 ## Quick Start
 
 ```bash
 pip install -r requirements.txt
+sudo apt-get install -y unar ffmpeg          # Linux deps
 
-# Generate samples (downloads raw from S3 on first run)
+# 3-sample smoke test
+python examples/generate.py --num-samples 3
+
+# Full run (all 801 samples)
 python examples/generate.py
-
-# Generate only N samples
-python examples/generate.py --num-samples 10
-
-# Custom output directory
-python examples/generate.py --output data/my_output
 ```
-
-## Output Layout
-
-```
-data/questions/ddr_lesion_segmentation_task/
-├── task_0000/
-│   ├── first_frame.png
-│   ├── final_frame.png
-│   ├── first_video.mp4
-│   ├── last_video.mp4
-│   ├── ground_truth.mp4
-│   ├── prompt.txt
-│   └── metadata.json
-├── task_0001/
-└── ...
-```
-
-## Example Output
-
-See [`examples/example_output/`](examples/example_output/) for 2 reference
-samples committed alongside the code.
 
 ## Configuration
 
@@ -60,30 +70,30 @@ samples committed alongside the code.
 
 | Field | Default | Description |
 |---|---|---|
-| `domain` | `"ddr_lesion_segmentation"` | Task domain string used in output paths. |
-| `s3_bucket` | `"med-vr-datasets"` | S3 bucket containing raw data. |
-| `s3_prefix` | `"M-042-044_DDR/raw/"` | S3 key prefix for raw data. |
-| `fps` | `8` | Output video FPS. |
-| `raw_dir` | `Path("raw")` | Local raw cache directory. |
-| `num_samples` | `None` | Max samples (None = all). |
+| `domain` | `"fives_retinal_vessel_segmentation"` | Task domain string used in output paths. |
+| `s3_bucket` | `"med-vr-datasets"` | S3 bucket containing the raw rar. |
+| `s3_prefix` | `"M-114/fives/"` | S3 prefix for the FIVES rar. |
+| `rar_key` | `"M-114/fives/34969398"` | Exact S3 key of the rar archive. |
+| `fps` | `6` | Output video FPS. |
+| `num_video_frames` | `30` | Frames per clip (5 s at 6 fps). |
+| `splits` | `("test","train")` | FIVES splits to iterate. |
+| `num_samples` | `None` | Max samples (None = all 801). |
 
 ## Repository Structure
 
 ```
-M-042_ddr_lesion_segmentation_data-pipeline/
-├── core/                ← shared pipeline framework (verbatim)
+M-114_fives_retinal_vessel_segmentation_data-pipeline/
+├── core/                ← shared pipeline framework
 ├── eval/                ← shared evaluation utilities
 ├── src/
 │   ├── download/
-│   │   └── downloader.py   ← S3 raw-data downloader
+│   │   └── downloader.py   ← S3 rar fetch + unar extract
 │   └── pipeline/
 │       ├── config.py        ← task config
-│       ├── pipeline.py      ← TaskPipeline
-│       ├── transforms.py    ← visualization helpers (shim)
-│       └── _phase2/         ← vendored phase2 prototype logic
+│       ├── pipeline.py      ← TaskPipeline (image+mask → 7-file sample)
+│       └── transforms.py    ← overlay + vessel-reveal animation
 ├── examples/
-│   ├── generate.py
-│   └── example_output/      ← committed reference samples
+│   └── generate.py
 ├── requirements.txt
 ├── README.md
 └── LICENSE

@@ -1,7 +1,5 @@
 numpy
 opencv-python
-nibabel
-pydicom
 Pillow
 boto3
 pydantic>=2.0

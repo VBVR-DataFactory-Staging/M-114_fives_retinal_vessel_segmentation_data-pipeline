@@ -1,17 +1,12 @@
 """Core download module — fetch raw data from external sources.
 
-Provides generic download utilities (HTTP public S3, HuggingFace).
-The actual dataset-specific download logic lives in ``src.download``;
-this module always delegates to it via :func:`run_download`.
-
-No AWS credentials required — all downloads use public HTTP URLs.
+Provides generic download utilities (HuggingFace, S3 via boto3). The
+actual dataset-specific download logic lives in ``src.download``; this
+module always delegates to it via :func:`run_download`.
 """
 
 from pathlib import Path
-from typing import Iterator, List, Optional
-from urllib.request import urlopen, Request
-from urllib.error import URLError
-import xml.etree.ElementTree as ET
+from typing import Iterator, Optional
 
 
 # ============================================================================
@@ -19,10 +14,7 @@ import xml.etree.ElementTree as ET
 # ============================================================================
 
 class HuggingFaceDownloader:
-    """Download datasets from HuggingFace Hub into the ``raw/`` directory.
-
-    Requires ``pip install datasets huggingface-hub`` (optional dependency).
-    """
+    """Download datasets from HuggingFace Hub into the ``raw/`` directory."""
 
     def __init__(self, repo_id: str, split: str = "test", raw_dir: Path = Path("raw")):
         self.repo_id = repo_id
@@ -33,7 +25,7 @@ class HuggingFaceDownloader:
         from datasets import load_dataset
 
         self.raw_dir.mkdir(parents=True, exist_ok=True)
-        print(f"Downloading {self.repo_id} (split: {self.split}) → {self.raw_dir}/")
+        print(f"Downloading {self.repo_id} (split: {self.split}) -> {self.raw_dir}/")
         dataset = load_dataset(
             self.repo_id,
             split=self.split,
@@ -50,91 +42,46 @@ class HuggingFaceDownloader:
 
 
 # ============================================================================
-#  Public S3 download (no credentials required)
+#  S3 download (via boto3, EC2 IAM role)
 # ============================================================================
-
-def _list_s3_public(bucket: str, prefix: str, region: str = "us-east-2") -> List[str]:
-    """List objects in a public S3 bucket via the REST XML API.
-
-    Returns a list of S3 keys under *prefix*.
-    """
-    base = f"https://{bucket}.s3.{region}.amazonaws.com"
-    keys: List[str] = []
-    continuation = None
-
-    while True:
-        url = f"{base}?list-type=2&prefix={prefix}"
-        if continuation:
-            url += f"&continuation-token={continuation}"
-
-        resp = urlopen(Request(url))
-        tree = ET.parse(resp)
-        root = tree.getroot()
-        ns = root.tag.split("}")[0] + "}" if "}" in root.tag else ""
-
-        for content in root.findall(f"{ns}Contents"):
-            key = content.find(f"{ns}Key").text
-            if key and not key.endswith("/"):
-                keys.append(key)
-
-        is_truncated = root.find(f"{ns}IsTruncated")
-        if is_truncated is not None and is_truncated.text == "true":
-            token_el = root.find(f"{ns}NextContinuationToken")
-            continuation = token_el.text if token_el is not None else None
-        else:
-            break
-
-    return keys
-
 
 def download_from_s3(
     bucket_name: str,
     s3_prefix: str,
     local_dir: Path,
-    region: str = "us-east-2",
 ) -> int:
-    """Download dataset from a **public** S3 bucket via HTTP.
+    """Download dataset from S3 (private bucket OK via EC2 IAM role)."""
+    import boto3
 
-    No AWS credentials required. The bucket must allow public read.
-
-    Args:
-        bucket_name: S3 bucket name.
-        s3_prefix: S3 prefix to download from.
-        local_dir: Local directory to save files.
-        region: AWS region (default: us-east-2).
-
-    Returns:
-        Number of files downloaded.
-    """
+    s3 = boto3.client("s3")
     local_dir = Path(local_dir)
     local_dir.mkdir(parents=True, exist_ok=True)
 
-    base_url = f"https://{bucket_name}.s3.{region}.amazonaws.com"
-    print(f"Listing files at {base_url}/{s3_prefix}...")
+    print(f"Listing s3://{bucket_name}/{s3_prefix} ...")
 
-    keys = _list_s3_public(bucket_name, s3_prefix, region)
-    print(f"Found {len(keys)} files to download...")
+    paginator = s3.get_paginator("list_objects_v2")
+    pages = paginator.paginate(Bucket=bucket_name, Prefix=s3_prefix)
+
+    files = []
+    for page in pages:
+        for obj in page.get("Contents", []):
+            files.append(obj["Key"])
+
+    print(f"Found {len(files)} files to download...")
 
     downloaded = 0
-    for key in keys:
-        relative_path = key.replace(s3_prefix, "", 1).lstrip("/")
-        if not relative_path:
+    for key in files:
+        rel = key.replace(s3_prefix, "", 1).lstrip("/")
+        if not rel:
             continue
-
-        local_path = local_dir / relative_path
+        local_path = local_dir / rel
         local_path.parent.mkdir(parents=True, exist_ok=True)
+        s3.download_file(bucket_name, key, str(local_path))
+        downloaded += 1
+        if downloaded % 10 == 0:
+            print(f"  Downloaded {downloaded}/{len(files)} files...")
 
-        file_url = f"{base_url}/{key}"
-        try:
-            resp = urlopen(Request(file_url))
-            local_path.write_bytes(resp.read())
-            downloaded += 1
-            if downloaded % 10 == 0:
-                print(f"  Downloaded {downloaded}/{len(keys)} files...")
-        except URLError as e:
-            print(f"  Failed: {key} ({e})")
-
-    print(f"\n✓ Download complete: {downloaded} files")
+    print(f"Download complete: {downloaded} files")
     return downloaded
 
 
@@ -143,16 +90,7 @@ def download_from_s3(
 # ============================================================================
 
 def run_download(config) -> Iterator[dict]:
-    """Standard download entry point.
-
-    Imports and calls the custom downloader defined in ``src.download``.
-
-    Args:
-        config: A :class:`PipelineConfig` (or subclass) instance.
-
-    Yields:
-        Raw sample dicts from the custom downloader.
-    """
+    """Standard download entry point — calls src.download.create_downloader."""
     from src.download import create_downloader
 
     downloader = create_downloader(config)
