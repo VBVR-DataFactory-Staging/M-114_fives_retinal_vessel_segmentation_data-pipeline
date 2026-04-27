@@ -99,14 +99,22 @@ class TaskDownloader:
         self.extract_dir.mkdir(parents=True, exist_ok=True)
         print(f"  extracting {local_rar} -> {self.extract_dir}")
         # `unar -q -o <dir>` writes the archive's own top dir under <dir>.
-        subprocess.run(
+        # NOTE: unar may fail on 1-2 individual files inside this .rar (xlsx
+        # metadata + 1 png). Don't abort the whole pipeline — check that the
+        # expected dataset root exists with enough images instead.
+        result = subprocess.run(
             ["unar", "-q", "-f", "-o", str(self.extract_dir), str(local_rar)],
-            check=True,
+            check=False,
         )
         if not fives_root.exists():
             raise RuntimeError(
-                f"Extraction succeeded but expected dir not found: {fives_root}"
+                f"Extraction failed (rc={result.returncode}) and expected dir not found: {fives_root}"
             )
+        # Verify enough images extracted (FIVES has ~600 train + ~200 test originals)
+        n_imgs = sum(1 for _ in fives_root.rglob("*.png"))
+        print(f"  extracted {n_imgs} png files (unar rc={result.returncode}, ok if rc!=0 but n_imgs>500)")
+        if n_imgs < 500:
+            raise RuntimeError(f"Extraction yielded only {n_imgs} png files, expected >500")
         return fives_root
 
     # -- Stage 3: ensure raw is ready ----------------------------------------
